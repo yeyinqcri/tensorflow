@@ -87,7 +87,7 @@ Tensor ByteSwap(Tensor t) {
 // Assert that <reader> has a tensor under <key> matching <expected_val> in
 // terms of both shape, dtype, and value
 template <typename T>
-void Expect(BundleReader* reader, const string& key,
+void Expect(AbstractBundleReader* reader, const string& key,
             const Tensor& expected_val) {
   // Tests for Contains().
   EXPECT_TRUE(reader->Contains(key));
@@ -538,6 +538,12 @@ void VersionTest(const VersionDef& version, StringPiece expected_error) {
   EXPECT_TRUE(absl::StartsWith(reader.status().message(), expected_error));
 }
 
+void SetEnvOrDie(absl::string_view key, absl::string_view val) {
+  CHECK_EQ(setenv(key.data(), val.data(), 1), 0);
+}
+
+void UnSetEnv(absl::string_view key) { unsetenv(key.data()); }
+
 }  // namespace
 
 TEST(TensorBundleTest, Basic) {
@@ -555,6 +561,37 @@ TEST(TensorBundleTest, Basic) {
   TestBasic<quint8>();
   TestBasic<qint8>();
   TestBasic<bfloat16>();
+}
+
+TEST(TensorBundleTest, TypeCasting) {
+  auto ckpt_path = Prefix("foo");
+  auto mapping_path = Prefix("var_name_mapping");
+  {
+    BundleWriter writer(Env::Default(), ckpt_path);
+    TF_EXPECT_OK(writer.Add("foo_000", Constant_2x3<float>((3))));
+    TF_EXPECT_OK(writer.Add("foo_001", Constant_2x3<float>(0)));
+    TF_ASSERT_OK(writer.Finish());
+    const std::vector<std::tuple<std::string, std::string, DataType>> vec(
+        {std::make_tuple("var_000", "foo_000", DT_BFLOAT16),
+         std::make_tuple("var_001", "foo_001", DT_FLOAT)});
+    CkptEntrySet set;
+    for (const auto& tuple : vec) {
+      auto* entry = set.mutable_entries()->Add();
+      entry->set_var_name(std::get<0>(tuple));
+      entry->set_ckpt_name(std::get<1>(tuple));
+      entry->set_dtype(std::get<2>(tuple));
+    }
+    std::unique_ptr<WritableFile> file;
+    TF_CHECK_OK(Env::Default()->NewWritableFile(mapping_path, &file));
+    TF_CHECK_OK(file->Append(set.SerializeAsString()));
+    TF_CHECK_OK(file->Close());
+  }
+  {
+    MixedBundleReaderWrapper reader(Env::Default(), ckpt_path, mapping_path);
+    TF_ASSERT_OK(reader.status());
+    Expect<bfloat16>(&reader, "var_000", Constant_2x3<bfloat16>(bfloat16(3)));
+    Expect<float>(&reader, "var_001", Constant_2x3<float>(float(0)));
+  }
 }
 
 TEST(TensorBundleTest, Endianness) {
@@ -947,8 +984,8 @@ TEST(TensorBundleTest, SortForSequentialAccess) {
   TF_ASSERT_OK(reader.status());
   std::vector<string> tensor_names = {"tensor-1-0", "tensor-0-1", "tensor-1-2",
                                       "tensor-0-0", "tensor-1-1", "tensor-0-2"};
-  TF_ASSERT_OK(reader.SortForSequentialAccess<string>(
-      tensor_names, [](const string& element) { return element; }));
+  TF_ASSERT_OK(SortForSequentialAccess<string>(
+      &reader, tensor_names, [](const string& element) { return element; }));
   EXPECT_THAT(tensor_names,
               ElementsAre("tensor-0-0", "tensor-0-1", "tensor-0-2",
                           "tensor-1-2", "tensor-1-1", "tensor-1-0"));
@@ -1154,6 +1191,7 @@ TEST(TensorBundleTest, LargeVariableLoadingTest) {
 absl::Status CreateFile(Env* env, const std::string& fname) {
   std::unique_ptr<WritableFile> file;
   TF_RETURN_IF_ERROR(env->NewWritableFile(fname, &file));
+
   return file->Close();
 }
 
