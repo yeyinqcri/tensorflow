@@ -1263,10 +1263,11 @@ Status MixedBundleReaderWrapper::GetBundleEntryProto(absl::string_view key,
   std::tuple<std::string, DataType> ret_val;
   TF_CHECK_OK(this->GetCkptNameAndDataType(key, &ret_val));
   const std::string ckpt_name = std::get<0>(ret_val);
+  TF_RETURN_IF_ERROR(bundle_reader_->GetBundleEntryProto(ckpt_name, entry));
   if (this->bfloat16_var_names_.contains(std::string(key))) {
-    entry->set_dtype(DT_BFLOAT16);
+      entry->set_dtype(DT_BFLOAT16);
   }
-  return bundle_reader_->GetBundleEntryProto(ckpt_name, entry);
+  return OkStatus();
 }
 
 Status MixedBundleReaderWrapper::GetCkptNameAndDataType(
