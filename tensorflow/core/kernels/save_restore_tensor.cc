@@ -305,7 +305,8 @@ struct RestoreOp {
           new BundleReader(tsl::Env::Default(), reader_prefix, {cache, false}));
     } else {
       reader = absl::WrapUnique<MixedBundleReaderWrapper>(
-          new MixedBundleReaderWrapper(tsl::Env::Default(), float32CkptPrefix, ckptPath));
+          new MixedBundleReaderWrapper(tsl::Env::Default(), float32CkptPrefix,
+                                       ckptPath));
     }
     if (!reader->status().ok()) {
       status = reader->status();
@@ -381,32 +382,6 @@ struct RestoreOp {
   absl::Status status;
 };
 
-template <class T>
-Status SortForSequentialAccess(
-    AbstractBundleReader* reader, std::vector<T>& container,
-    absl::FunctionRef<std::string(const T&)> get_key) {
-  struct FileOffset {
-    int32_t shard_id;
-    int64_t offset;
-  };
-  absl::flat_hash_map<std::string, FileOffset> file_offsets;
-  for (const T& element : container) {
-    BundleEntryProto entry;
-    TF_RETURN_IF_ERROR(reader->GetBundleEntryProto(get_key(element), &entry));
-    file_offsets[get_key(element)] = {entry.shard_id(), entry.offset()};
-  }
-  absl::c_sort(container, [&get_key, &file_offsets](const T& a, const T& b) {
-    const FileOffset& file_offset_a = file_offsets[get_key(a)];
-    const FileOffset& file_offset_b = file_offsets[get_key(b)];
-    if (file_offset_a.shard_id == file_offset_b.shard_id) {
-      return file_offset_a.offset < file_offset_b.offset;
-    } else {
-      return file_offset_a.shard_id < file_offset_b.shard_id;
-    }
-  });
-  return absl::OkStatus();
-}
-
 }  // namespace
 
 absl::Status RestoreTensorsV2(OpKernelContext* context, const Tensor& prefix,
@@ -434,12 +409,11 @@ absl::Status RestoreTensorsV2(OpKernelContext* context, const Tensor& prefix,
   const std::string float32CkptPrefix = GetEnvAsStr(kFloat32CkptPrefixEnv);
 
   if (ckptPath.empty()) {
-      default_reader = absl::WrapUnique<BundleReader>(
-              new BundleReader(env, prefix_string, {&cache, false}));
+    default_reader = absl::WrapUnique<BundleReader>(
+        new BundleReader(env, prefix_string, {&cache, false}));
   } else {
-    default_reader =
-        absl::WrapUnique<MixedBundleReaderWrapper>(new MixedBundleReaderWrapper(
-            env, float32CkptPrefix,  ckptPath));
+    default_reader = absl::WrapUnique<MixedBundleReaderWrapper>(
+        new MixedBundleReaderWrapper(env, float32CkptPrefix, ckptPath));
   }
 
   TF_RETURN_IF_ERROR(default_reader->status());

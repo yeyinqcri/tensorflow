@@ -1247,7 +1247,8 @@ MixedBundleReaderWrapper::MixedBundleReaderWrapper(
     if (entry.dtype() == ::tensorflow::DT_BFLOAT16) {
       this->bfloat16_var_names_.insert(entry.var_name());
     }
-    CHECK(entry.dtype() == ::tensorflow::DT_FLOAT)
+    CHECK(entry.dtype() == ::tensorflow::DT_FLOAT ||
+          entry.dtype() == ::tensorflow::DT_BFLOAT16)
         << "unexpected entry type: " << entry.dtype();
     this->varname_to_ckpt_map_[entry.var_name()] = entry.ckpt_name();
   }
@@ -1262,6 +1263,9 @@ Status MixedBundleReaderWrapper::GetBundleEntryProto(absl::string_view key,
   std::tuple<std::string, DataType> ret_val;
   TF_CHECK_OK(this->GetCkptNameAndDataType(key, &ret_val));
   const std::string ckpt_name = std::get<0>(ret_val);
+  if (this->bfloat16_var_names_.contains(std::string(key))) {
+    entry->set_dtype(DT_BFLOAT16);
+  }
   return bundle_reader_->GetBundleEntryProto(ckpt_name, entry);
 }
 
@@ -1274,7 +1278,7 @@ Status MixedBundleReaderWrapper::GetCkptNameAndDataType(
   const std::string ckpt_name = iter->second;
   std::get<0>(*result) = ckpt_name;
   auto i = this->bfloat16_var_names_.find(name);
-  if (i == this->bfloat16_var_names_.end()) {
+  if (i != this->bfloat16_var_names_.end()) {
     std::get<1>(*result) = DT_BFLOAT16;
   } else {
     std::get<1>(*result) = DT_FLOAT;
